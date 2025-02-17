@@ -207,44 +207,44 @@ app.post("/logout", (req, res) => {
   });
 });
 // POST /vote/:candidateId
+// POST /vote/:candidateId - Allows voting for multiple positions but only once per position
 app.post("/vote/:candidateId", async (req, res) => {
-  const candidateId = parseInt(req.params.candidateId);
-  const voterId = req.session.user ? req.session.user.id : null; // Assuming voter ID is stored in session
+    const candidateId = parseInt(req.params.candidateId);
+    const { position } = req.body;
+    const voterId = req.session.user ? req.session.user.id : null;
 
-  if (!voterId) {
-    return res.status(401).json({ message: "Unauthorized" });
-  }
-
-  try {
-    // Check if the voter has already voted
-    const [existingVote] = await pool.execute(
-      "SELECT * FROM votes WHERE voter_id = ?",
-      [voterId]
-    );
-
-    if (existingVote.length > 0) {
-      return res.status(400).json({ message: "You have already voted" });
+    if (!voterId) {
+        return res.status(401).json({ message: "Unauthorized" });
     }
 
-    // Cast the vote
-    await pool.execute(
-      "INSERT INTO votes (voter_id, candidate_id) VALUES (?, ?)",
-      [voterId, candidateId]
-    );
+    try {
+        // Check if the voter has already voted for this position
+        const [existingVote] = await pool.execute(
+            "SELECT * FROM votes WHERE voter_id = ? AND position = ?",
+            [voterId, position]
+        );
 
-    // Update vote count for the candidate
-    await pool.execute(
-      "UPDATE candidates SET voteCount = voteCount + 1 WHERE id = ?",
-      [candidateId]
-    );
+        if (existingVote.length > 0) {
+            return res.status(400).json({ message: `You have already voted for ${position}` });
+        }
 
-    res.status(200).json({ message: "Vote cast successfully" });
-  } catch (error) {
-    console.error("Error casting vote:", error);
-    res
-      .status(500)
-      .json({ message: "Failed to cast vote", error: error.message });
-  }
+        // Insert vote for the candidate in the specified position
+        await pool.execute(
+            "INSERT INTO votes (voter_id, candidate_id, position) VALUES (?, ?, ?)",
+            [voterId, candidateId, position]
+        );
+
+        // Update the vote count for the candidate
+        await pool.execute(
+            "UPDATE candidates SET voteCount = voteCount + 1 WHERE id = ?",
+            [candidateId]
+        );
+
+        res.status(200).json({ message: `Vote cast successfully for ${position}` });
+    } catch (error) {
+        console.error("Error casting vote:", error);
+        res.status(500).json({ message: "Failed to cast vote", error: error.message });
+    }
 });
 
 // GET /candidates (Updated)
@@ -290,6 +290,18 @@ app.post("/login", async (req, res) => {
       .status(500)
       .json({ message: "Login failed", error: "Internal server error" }); // Generic error message for the client
   }
+});
+
+// Get Election Dates
+app.get("/election-dates", async (req, res) => {
+    try {
+        const query = "SELECT start_date, end_date FROM election_dates"; // Select start and end dates
+        const [result] = await pool.execute(query);
+        res.status(200).json(result);
+    } catch (err) {
+        console.error("Error fetching election dates:", err);
+        res.status(500).json({ message: "Database error", error: err.message });
+    }
 });
 
 // Start Server
