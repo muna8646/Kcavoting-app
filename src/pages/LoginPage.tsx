@@ -1,4 +1,3 @@
-
 import React from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -21,15 +20,17 @@ export function LoginPage() {
       const data = await response.json();
 
       if (data.success) {
-        localStorage.setItem("userRole", data.role);
+        localStorage.setItem("userRole", data.role); // Store the user role
+        localStorage.setItem("registrationNumber", registrationNumber); // Store registration number
         console.log("✅ Login successful. Role:", data.role);
 
+        // Redirect based on the role
         if (data.role === "admin") {
           navigate("/AdminDashboard");
         } else if (data.role === "voter") {
           navigate("/VoterDashboard");
         } else {
-          console.warn("⚠️  Unknown role:", data.role);
+          console.warn("⚠️ Unknown role:", data.role);
           alert("Unknown user role. Contact administrator.");
         }
       } else {

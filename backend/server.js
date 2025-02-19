@@ -2,7 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const mysql = require("mysql2/promise");
 const cors = require("cors");
-const session = require("express-session"); // Import express-session
+const session = require("express-session");
 const multer = require("multer");
 const path = require("path");
 
@@ -11,10 +11,10 @@ const app = express();
 // Configure session middleware
 app.use(
   session({
-    secret: "your-secret-key", // Replace with a strong, random key
+    secret: "your-secret-key",
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false }, // set to true if using https in production
+    cookie: { secure: false },  // Make sure you're not using secure cookies in development
   })
 );
 
@@ -22,7 +22,7 @@ app.use(cors({ origin: "http://localhost:5173", credentials: true }));
 app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// Database configuration
+// Database connection pool
 const dbConfig = {
   host: "localhost",
   user: "root",
@@ -30,7 +30,6 @@ const dbConfig = {
   database: "voting_app",
 };
 
-// Create a database connection pool
 const pool = mysql.createPool(dbConfig);
 
 // Test the database connection
@@ -56,33 +55,31 @@ const storage = multer.diskStorage({
     cb(null, Date.now() + "-" + file.originalname);
   },
 });
+
 const upload = multer({ storage });
 
-// --- API Endpoints ---
+// Helper function to handle database query execution
+async function executeQuery(query, params = []) {
+  try {
+    const [result] = await pool.execute(query, params);
+    return result;
+  } catch (err) {
+    throw new Error("Database error: " + err.message);
+  }
+}
 
 // Register Voter
 app.post("/register-voter", async (req, res) => {
   const { name, registrationNumber, nationalId } = req.body;
 
-  // Validate input
   if (!name || !registrationNumber || !nationalId) {
     return res.status(400).json({ message: "All fields are required" });
   }
 
+  const query = "INSERT INTO voters (name, registration_number, national_id) VALUES (?, ?, ?)";
   try {
-    const query =
-      "INSERT INTO voters (name, registration_number, national_id) VALUES (?, ?, ?)";
-    const [result] = await pool.execute(query, [
-      name,
-      registrationNumber,
-      nationalId,
-    ]);
-    res
-      .status(201)
-      .json({
-        message: "Voter registered successfully",
-        voterId: result.insertId,
-      });
+    const result = await executeQuery(query, [name, registrationNumber, nationalId]);
+    res.status(201).json({ message: "Voter registered successfully", voterId: result.insertId });
   } catch (err) {
     console.error("Error inserting voter:", err);
     res.status(500).json({ message: "Database error", error: err.message });
@@ -98,24 +95,11 @@ app.post("/register-candidate", upload.single("image"), async (req, res) => {
     return res.status(400).json({ message: "All fields are required" });
   }
 
-  // Store the relative path in the database
   const imageUrl = `/uploads/${filename}`;
-
+  const query = "INSERT INTO candidates (name, position, manifesto, image_url) VALUES (?, ?, ?, ?)";
   try {
-    const query =
-      "INSERT INTO candidates (name, position, manifesto, image_url) VALUES (?, ?, ?, ?)";
-    const [result] = await pool.execute(query, [
-      name,
-      position,
-      manifesto,
-      imageUrl,
-    ]);
-    res
-      .status(201)
-      .json({
-        message: "Candidate registered successfully",
-        candidateId: result.insertId,
-      });
+    const result = await executeQuery(query, [name, position, manifesto, imageUrl]);
+    res.status(201).json({ message: "Candidate registered successfully", candidateId: result.insertId });
   } catch (err) {
     console.error("Error inserting candidate:", err);
     res.status(500).json({ message: "Database error", error: err.message });
@@ -126,21 +110,14 @@ app.post("/register-candidate", upload.single("image"), async (req, res) => {
 app.post("/create-vacancy", async (req, res) => {
   const { title, description, requirements } = req.body;
 
-  // Validate input
   if (!title || !description || !requirements) {
     return res.status(400).json({ message: "All fields are required" });
   }
 
+  const query = "INSERT INTO vacancies (title, description, requirements) VALUES (?, ?, ?)";
   try {
-    const query =
-      "INSERT INTO vacancies (title, description, requirements) VALUES (?, ?, ?)";
-    const [result] = await pool.execute(query, [title, description, requirements]);
-    res
-      .status(201)
-      .json({
-        message: "Vacancy created successfully",
-        vacancyId: result.insertId,
-      });
+    const result = await executeQuery(query, [title, description, requirements]);
+    res.status(201).json({ message: "Vacancy created successfully", vacancyId: result.insertId });
   } catch (err) {
     console.error("Error inserting vacancy:", err);
     res.status(500).json({ message: "Database error", error: err.message });
@@ -151,20 +128,14 @@ app.post("/create-vacancy", async (req, res) => {
 app.post("/set-election-date", async (req, res) => {
   const { start, end } = req.body;
 
-  // Validate input
   if (!start || !end) {
     return res.status(400).json({ message: "All fields are required" });
   }
 
+  const query = "INSERT INTO election_dates (start_date, end_date) VALUES (?, ?)";
   try {
-    const query = "INSERT INTO election_dates (start_date, end_date) VALUES (?, ?)";
-    const [result] = await pool.execute(query, [start, end]);
-    res
-      .status(201)
-      .json({
-        message: "Election date set successfully",
-        electionId: result.insertId,
-      });
+    const result = await executeQuery(query, [start, end]);
+    res.status(201).json({ message: "Election date set successfully", electionId: result.insertId });
   } catch (err) {
     console.error("Error setting election date:", err);
     res.status(500).json({ message: "Database error", error: err.message });
@@ -174,8 +145,7 @@ app.post("/set-election-date", async (req, res) => {
 // Get Vacancies
 app.get("/vacancies", async (req, res) => {
   try {
-    const query = "SELECT * FROM vacancies"; // Select all vacancy data
-    const [result] = await pool.execute(query);
+    const result = await executeQuery("SELECT * FROM vacancies");
     res.status(200).json(result);
   } catch (err) {
     console.error("Error fetching vacancies:", err);
@@ -183,11 +153,11 @@ app.get("/vacancies", async (req, res) => {
   }
 });
 
-// Get All Candidates
+// Get All Candidates with vote count
 app.get("/candidates", async (req, res) => {
   try {
-    const query = "SELECT * FROM candidates"; //Select all candidates data
-    const [result] = await pool.execute(query);
+    const query = "SELECT *, (SELECT COUNT(*) FROM votes WHERE candidate_id = candidates.id) AS voteCount FROM candidates";
+    const result = await executeQuery(query);
     res.status(200).json(result);
   } catch (err) {
     console.error("Error fetching candidates:", err);
@@ -195,70 +165,111 @@ app.get("/candidates", async (req, res) => {
   }
 });
 
-// POST /logout
+// Logout
 app.post("/logout", (req, res) => {
   req.session.destroy((err) => {
     if (err) {
       console.error("Error destroying session:", err);
       return res.status(500).json({ message: "Logout failed" });
     }
-    res.clearCookie("connect.sid"); // Clear the session cookie
+    res.clearCookie("connect.sid");
     res.status(200).json({ message: "Logged out successfully" });
   });
 });
-// POST /vote/:candidateId
-// POST /vote/:candidateId - Allows voting for multiple positions but only once per position
-app.post("/vote/:candidateId", async (req, res) => {
-    const candidateId = parseInt(req.params.candidateId);
-    const { position } = req.body;
-    const voterId = req.session.user ? req.session.user.id : null;
 
-    if (!voterId) {
-        return res.status(401).json({ message: "Unauthorized" });
-    }
+// In your server.js file
 
+// Get Results
+app.get("/results", async (req, res) => {
     try {
-        // Check if the voter has already voted for this position
-        const [existingVote] = await pool.execute(
-            "SELECT * FROM votes WHERE voter_id = ? AND position = ?",
-            [voterId, position]
-        );
-
-        if (existingVote.length > 0) {
-            return res.status(400).json({ message: `You have already voted for ${position}` });
-        }
-
-        // Insert vote for the candidate in the specified position
-        await pool.execute(
-            "INSERT INTO votes (voter_id, candidate_id, position) VALUES (?, ?, ?)",
-            [voterId, candidateId, position]
-        );
-
-        // Update the vote count for the candidate
-        await pool.execute(
-            "UPDATE candidates SET voteCount = voteCount + 1 WHERE id = ?",
-            [candidateId]
-        );
-
-        res.status(200).json({ message: `Vote cast successfully for ${position}` });
+        const query = `
+            SELECT
+                c.id,
+                c.name,
+                c.position,
+                c.manifesto,
+                c.image_url,
+                (SELECT COUNT(*) FROM votes WHERE candidate_id = c.id) AS vote_count
+            FROM
+                candidates c;
+        `;
+        const results = await executeQuery(query);
+        res.json(results);
     } catch (error) {
-        console.error("Error casting vote:", error);
-        res.status(500).json({ message: "Failed to cast vote", error: error.message });
+        console.error("Error fetching results:", error);
+        res.status(500).json({ message: "Failed to fetch election results" });
     }
 });
 
-// GET /candidates (Updated)
-app.get("/candidates", async (req, res) => {
+// Vote Casting Endpoint
+app.post('/vote/:candidateId', async (req, res) => {
+  const { candidateId } = req.params;
+  //Gets the registration number of a user
+  const registrationNumber = req.session.user?.registrationNumber;
+
+  if (!req.session.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   try {
-    const query =
-      "SELECT *, (SELECT COUNT(*) FROM votes WHERE candidate_id = candidates.id) AS voteCount FROM candidates";
-    const [result] = await pool.execute(query);
-    res.status(200).json(result);
+      // Get the voter's ID based on registration number
+      const [voterRows] = await pool.execute(
+          "SELECT id FROM voters WHERE registration_number = ?",
+          [registrationNumber]
+      );
+
+      if (voterRows.length === 0) {
+          return res.status(404).json({ error: 'Voter not found' });
+      }
+
+      const voterId = voterRows[0].id;
+
+      // Get the candidate's position
+      const [candidateRows] = await pool.execute(
+          "SELECT position FROM candidates WHERE id = ?",
+          [candidateId]
+      );
+
+      if (candidateRows.length === 0) {
+          return res.status(404).json({ error: 'Candidate not found' });
+      }
+
+      const position = candidateRows[0].position;
+
+      // Check if the voter has already voted for this position
+      const [voteRows] = await pool.execute(
+          "SELECT * FROM votes WHERE voter_id = ? AND position = ?",
+          [voterId, position]
+      );
+
+      if (voteRows.length > 0) {
+          return res.status(400).json({ error: 'You have already voted for this position' });
+      }
+
+      // Insert the vote
+      await pool.execute(
+          "INSERT INTO votes (voter_id, candidate_id, position) VALUES (?, ?, ?)",
+          [voterId, candidateId, position]
+      );
+
+      res.json({ success: true });
+
   } catch (err) {
-    console.error("Error fetching candidates:", err);
-    res.status(500).json({ message: "Database error", error: err.message });
+      console.error('Error casting vote:', err);
+      return res.status(500).json({ error: 'Failed to cast vote' });
   }
 });
+
+app.get('/candidates', (req, res) => {
+    const sql = 'SELECT * FROM candidates';
+    db.query(sql, (err, results) => {
+        if (err) {
+            return res.status(500).json({ error: 'Failed to fetch candidates' });
+        }
+        res.json(results);
+    });
+});
+// Login Endpoint
 app.post("/login", async (req, res) => {
   const { registrationNumber, nationalId } = req.body;
 
@@ -269,39 +280,94 @@ app.post("/login", async (req, res) => {
     );
 
     if (results.length > 0) {
-      const user = results[0]; // Access the first element of the array
-
-      // Store user information in the session
+      const user = results[0];
       req.session.user = {
         id: user.id,
         role: user.role,
         name: user.name,
       };
-
-      // Determine the role and send the appropriate response
-      const role = user.role;
-      res.json({ success: true, role: role, message: "Login successful" });
+      console.log('User session:', req.session.user);  // Log session
+      res.json({ success: true, role: user.role, message: "Login successful" });
     } else {
       res.status(401).json({ success: false, message: "Invalid credentials" });
     }
   } catch (error) {
-    console.error("❌ Login error:", error); // Log the detailed error
-    res
-      .status(500)
-      .json({ message: "Login failed", error: "Internal server error" }); // Generic error message for the client
+    console.error("❌ Login error:", error);
+    res.status(500).json({ message: "Login failed", error: "Internal server error" });
   }
 });
 
 // Get Election Dates
 app.get("/election-dates", async (req, res) => {
-    try {
-        const query = "SELECT start_date, end_date FROM election_dates"; // Select start and end dates
-        const [result] = await pool.execute(query);
-        res.status(200).json(result);
-    } catch (err) {
-        console.error("Error fetching election dates:", err);
-        res.status(500).json({ message: "Database error", error: err.message });
+  try {
+    const result = await executeQuery("SELECT start_date, end_date FROM election_dates");
+    res.status(200).json(result);
+  } catch (err) {
+    console.error("Error fetching election dates:", err);
+    res.status(500).json({ message: "Database error", error: err.message });
+  }
+});
+
+// Get Election Results
+app.get("/results", async (req, res) => {
+  try {
+    const query = `
+      SELECT id, name, position, manifesto, image_url, 
+      (SELECT COUNT(*) FROM votes WHERE candidate_id = candidates.id) AS voteCount 
+      FROM candidates
+      ORDER BY voteCount DESC`;
+
+    const result = await executeQuery(query);
+
+    const groupedResults = result.reduce((acc, candidate) => {
+      if (!acc[candidate.position]) {
+        acc[candidate.position] = [];
+      }
+      acc[candidate.position].push(candidate);
+      return acc;
+    }, {});
+
+    res.status(200).json(groupedResults);
+  } catch (err) {
+    console.error("Error fetching election results:", err);
+    res.status(500).json({ message: "Database error", error: err.message });
+  }
+});
+
+// Check if user has voted
+app.post("/check-vote-status", async (req, res) => {
+  const { registrationNumber } = req.body;
+
+  if (!registrationNumber) {
+    return res.status(400).json({ message: "Registration number is required" });
+  }
+
+  try {
+    const [voterRows] = await pool.execute(
+      "SELECT id FROM voters WHERE registration_number = ?",
+      [registrationNumber]
+    );
+
+    if (voterRows.length === 0) {
+      return res.status(404).json({ message: "Voter not found" });
     }
+
+    const voterId = voterRows[0].id;
+
+    const [voteRows] = await pool.execute(
+      "SELECT * FROM votes WHERE voter_id = ?",
+      [voterId]
+    );
+
+    if (voteRows.length > 0) {
+      return res.json({ hasVoted: true });
+    }
+
+    return res.json({ hasVoted: false });
+  } catch (err) {
+    console.error("Error checking vote status:", err);
+    res.status(500).json({ message: "Database error", error: err.message });
+  }
 });
 
 // Start Server

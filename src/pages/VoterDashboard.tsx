@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Vote, Eye, LogOut } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -8,28 +8,28 @@ interface Candidate {
     position: string;
     manifesto: string;
     image_url: string;
-    voteCount?: number;
+    voteCount: number;
 }
 
 export function VoterDashboard() {
     const [showResults, setShowResults] = useState(false);
-    const [votedFor, setVotedFor] = useState<number | null>(null);
-    const [candidates, setCandidates] = useState<Record<string, Candidate[]>>({});
+    const [votesPerPosition, setVotesPerPosition] = useState<Record<number, boolean>>({});
+    const [candidates, setCandidates] = useState<Candidate[]>([]);
     const [voteSuccess, setVoteSuccess] = useState(false);
     const [isElectionActive, setIsElectionActive] = useState(false);
-    const [timeRemaining, setTimeRemaining] = useState<number | null>(null); // Time remaining in seconds
+    const [timeRemaining, setTimeRemaining] = useState<number | null>(null);
     const [endDate, setEndDate] = useState<Date | null>(null);
     const navigate = useNavigate();
 
-    // Check user role on component mount
+    // Redirect if not a voter
     useEffect(() => {
         const role = localStorage.getItem('userRole');
         if (role !== 'voter') {
-            navigate('/'); // Redirect to login page if not a voter
+            navigate('/');
         }
     }, [navigate]);
 
-    // Fetch candidates from the server
+    // Fetch candidates from backend
     useEffect(() => {
         const fetchCandidates = async () => {
             try {
@@ -43,26 +43,15 @@ export function VoterDashboard() {
                 }
 
                 const data = await response.json();
-
-                // Ensure image URLs are absolute (prepend server URL if necessary)
                 const updatedCandidates = data.map((candidate: Candidate) => ({
                     ...candidate,
                     image_url: candidate.image_url.startsWith('http')
                         ? candidate.image_url
                         : `http://localhost:5000${candidate.image_url}`,
+                    voteCount: candidate.voteCount || 0,
                 }));
+                setCandidates(updatedCandidates);
 
-                // Group candidates by position
-                const groupedCandidates = updatedCandidates.reduce((acc: Record<string, Candidate[]>, candidate: Candidate) => {
-                    const position = candidate.position;
-                    if (!acc[position]) {
-                        acc[position] = [];
-                    }
-                    acc[position].push(candidate);
-                    return acc;
-                }, {});
-
-                setCandidates(groupedCandidates);
             } catch (error) {
                 console.error('Error fetching candidates:', error);
                 alert('Failed to load candidates. Please try again later.');
@@ -72,7 +61,7 @@ export function VoterDashboard() {
         fetchCandidates();
     }, []);
 
-    // Fetch election dates from the server and check if election is active
+    // Check election status and time remaining
     useEffect(() => {
         const checkElectionStatus = async () => {
             try {
@@ -92,7 +81,6 @@ export function VoterDashboard() {
                     return;
                 }
 
-                // Assuming the server returns an array of election dates, take the latest one
                 const latestElection = data[data.length - 1];
                 const startDate = new Date(latestElection.start_date);
                 const end_Date = new Date(latestElection.end_date);
@@ -104,14 +92,14 @@ export function VoterDashboard() {
             } catch (error) {
                 console.error('Error fetching election dates:', error);
                 alert('Failed to check election status. Please try again later.');
-                setIsElectionActive(false); // Assume election is inactive in case of error
+                setIsElectionActive(false);
             }
         };
 
         checkElectionStatus();
     }, []);
 
-    // Update the time remaining every second
+    // Update time remaining when election is active
     useEffect(() => {
         if (isElectionActive && endDate) {
             const intervalId = setInterval(() => {
@@ -119,7 +107,7 @@ export function VoterDashboard() {
                 const difference = endDate.getTime() - now.getTime();
 
                 if (difference > 0) {
-                    setTimeRemaining(Math.floor(difference / 1000)); // Convert to seconds
+                    setTimeRemaining(Math.floor(difference / 1000));
                 } else {
                     setTimeRemaining(0);
                     setIsElectionActive(false);
@@ -127,7 +115,7 @@ export function VoterDashboard() {
                 }
             }, 1000);
 
-            return () => clearInterval(intervalId); // Cleanup on unmount
+            return () => clearInterval(intervalId);
         }
     }, [isElectionActive, endDate]);
 
@@ -139,46 +127,49 @@ export function VoterDashboard() {
         const hours = Math.floor((seconds % (3600 * 24)) / 3600);
         const minutes = Math.floor((seconds % 3600) / 60);
         const remainingSeconds = seconds % 60;
-
         return `${days}d ${hours}h ${minutes}m ${remainingSeconds}s`;
     };
 
-   const handleVote = async (candidateId: number) => {
-    try {
-        const response = await fetch(`http://localhost:5000/vote/${candidateId}`, {
-            method: 'POST',
-            credentials: 'include',
-        });
+    const handleVote = async (candidateId: number) => {
+        try {
+            const response = await fetch(`http://localhost:5000/vote/${candidateId}`, {
+                method: 'POST',
+                credentials: 'include',
+            });
 
-        if (!response.ok) {
-            throw new Error('Failed to cast vote');
-        }
+            if (!response.ok) {
+                const errorData = await response.json();
+                if (errorData.error) {
+                    alert(errorData.error);
+                } else {
+                    alert('Failed to cast vote. Please try again.');
+                }
+                return;
+            }
 
-        setVotedFor(candidateId);
-        setVoteSuccess(true);
+            setVotesPerPosition(prev => ({ ...prev, [candidateId]: true }));
+            setVoteSuccess(true);
 
-        // Update vote count locally instead of re-fetching candidates
-        const updatedCandidates = { ...candidates };
-        for (const position in updatedCandidates) {
-            updatedCandidates[position] = updatedCandidates[position].map((candidate) =>
-                candidate.id === candidateId
-                    ? { ...candidate, voteCount: (candidate.voteCount || 0) + 1 }
-                    : candidate
+            // Update vote count locally
+            setCandidates(prevCandidates =>
+                prevCandidates.map(candidate =>
+                    candidate.id === candidateId
+                        ? { ...candidate, voteCount: candidate.voteCount + 1 }
+                        : candidate
+                )
             );
+
+            setTimeout(() => {
+                setVoteSuccess(false);
+            }, 3000);
+
+            setShowResults(true);
+
+        } catch (error) {
+            console.error('Error casting vote:', error);
+            alert('Failed to cast vote. Please try again.');
         }
-        setCandidates(updatedCandidates);
-
-        setTimeout(() => {
-            setVoteSuccess(false);
-        }, 3000);
-
-        setShowResults(true);
-    } catch (error) {
-        console.error('Error casting vote:', error);
-        alert('Failed to cast vote. Please try again.');
-    }
-};
-
+    };
 
     const handleLogout = async () => {
         try {
@@ -213,12 +204,20 @@ export function VoterDashboard() {
         );
     }
 
+    // Group candidates by position
+    const groupedCandidates = candidates.reduce((acc, candidate) => {
+        if (!acc[candidate.position]) {
+            acc[candidate.position] = [];
+        }
+        acc[candidate.position].push(candidate);
+        return acc;
+    }, {} as Record<string, Candidate[]>);
+
     return (
         <div className="min-h-screen bg-gray-100">
             <header className="bg-white shadow">
                 <div className="max-w-7xl mx-auto px-4 py-6 sm:px-6 lg:px-8 flex justify-between items-center">
                     <h1 className="text-3xl font-bold text-gray-900">Voter Dashboard</h1>
-                    {/* Countdown Timer */}
                     {isElectionActive && (
                         <div className="text-blue-600 font-bold">
                             Time Remaining: {formatTime(timeRemaining)}
@@ -243,67 +242,48 @@ export function VoterDashboard() {
                 </div>
             </header>
             <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
-                {/* Success Message */}
                 {voteSuccess && (
                     <div className="bg-green-200 text-green-800 p-3 rounded mb-4">
                         Vote cast successfully!
                     </div>
                 )}
 
-                {/* Candidates Section */}
+                {/* Candidates Display */}
                 {!voteSuccess && (
-                    <div className="space-y-6">
-                        {Object.entries(candidates).map(([position, candidatesForPosition]) => (
-                            <div key={position} className="bg-white p-6 rounded-lg shadow">
-                                <h2 className="text-xl font-bold text-gray-900 mb-4">{position}</h2>
-                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                    {candidatesForPosition.map((candidate) => (
-                                        <div key={candidate.id} className="bg-white overflow-hidden shadow rounded-lg">
+                    <div className="flex flex-wrap gap-6">
+                        {Object.keys(groupedCandidates).map(position => (
+                            <div key={position} className="w-full lg:w-1/3 xl:w-1/4 bg-white p-6 rounded-lg shadow-lg">
+                                <h3 className="text-xl font-semibold text-gray-900 mb-4">{position}</h3>
+                                {groupedCandidates[position].map(candidate => (
+                                    <div key={candidate.id} className="mb-6 border-b pb-4">
+                                        <div className="flex items-center gap-4">
                                             <img
                                                 src={candidate.image_url}
                                                 alt={candidate.name}
-                                                className="w-full h-48 object-cover"
-                                                onError={(e) => {
-                                                    e.currentTarget.onerror = null;
-                                                    e.currentTarget.src = '/fallback-image.jpg';
-                                                }}
+                                                className="w-16 h-16 object-cover rounded-full"
                                             />
-                                            <div className="p-6">
-                                                <h3 className="text-lg font-medium text-gray-900">{candidate.name}</h3>
-                                                <p className="mt-3 text-sm text-gray-700">{candidate.manifesto}</p>
-                                                <button
-                                                    onClick={() => handleVote(candidate.id)}
-                                                    disabled={votedFor !== null}
-                                                    className={`mt-4 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${votedFor === candidate.id
-                                                        ? 'bg-green-600'
-                                                        : votedFor !== null
-                                                            ? 'bg-gray-400 cursor-not-allowed'
-                                                            : 'bg-blue-600 hover:bg-blue-700'
-                                                        } focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500`}
-                                                >
-                                                    <Vote className="mr-2 h-5 w-5" />
-                                                    {votedFor === candidate.id ? 'Voted' : 'Vote'}
-                                                </button>
+                                            <div className="flex-1">
+                                                <h4 className="text-lg font-semibold text-gray-800">{candidate.name}</h4>
+                                                <p className="text-gray-600 text-sm">{candidate.manifesto}</p>
                                             </div>
                                         </div>
-                                    ))}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-
-                {/* Results Section */}
-                {showResults && (
-                    <div className="bg-white p-6 rounded-lg shadow">
-                        <h2 className="text-xl font-bold text-gray-900 mb-4">Election Results</h2>
-                        {Object.entries(candidates).map(([position, candidatesForPosition]) => (
-                            <div key={position} className="mb-6">
-                                <h3 className="text-lg font-bold text-gray-800 mb-2">{position}</h3>
-                                {candidatesForPosition.map((candidate) => (
-                                    <div key={candidate.id} className="flex justify-between items-center py-2 border-b border-gray-200">
-                                        <span>{candidate.name}</span>
-                                        <span className="font-medium text-blue-600">Votes: {candidate.voteCount || 0}</span>
+                                        <div className="mt-4 flex justify-between items-center">
+                                            <button
+                                                onClick={() => handleVote(candidate.id)}
+                                                disabled={votesPerPosition[candidate.id] || false}
+                                                className={`px-4 py-2 rounded-md text-sm font-medium text-white ${
+                                                    votesPerPosition[candidate.id]
+                                                        ? 'bg-green-600'
+                                                        : 'bg-blue-600 hover:bg-blue-700'
+                                                }`}
+                                            >
+                                                <Vote className="mr-2 h-5 w-5" />
+                                                {votesPerPosition[candidate.id] ? 'Voted' : 'Vote'}
+                                            </button>
+                                            <span className="text-gray-700 text-lg">
+                                                {showResults ? candidate.voteCount : '-'}
+                                            </span>
+                                        </div>
                                     </div>
                                 ))}
                             </div>
