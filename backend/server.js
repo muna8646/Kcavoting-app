@@ -177,98 +177,118 @@ app.post("/logout", (req, res) => {
   });
 });
 
-// In your server.js file
-
 // Get Results
 app.get("/results", async (req, res) => {
-    try {
-        const query = `
-            SELECT
-                c.id,
-                c.name,
-                c.position,
-                c.manifesto,
-                c.image_url,
-                (SELECT COUNT(*) FROM votes WHERE candidate_id = c.id) AS vote_count
-            FROM
-                candidates c;
-        `;
-        const results = await executeQuery(query);
-        res.json(results);
-    } catch (error) {
-        console.error("Error fetching results:", error);
-        res.status(500).json({ message: "Failed to fetch election results" });
-    }
+  try {
+    const query = `
+      SELECT
+        c.id,
+        c.name,
+        c.position,
+        c.manifesto,
+        c.image_url,
+        (SELECT COUNT(*) FROM votes WHERE candidate_id = c.id) AS vote_count
+      FROM
+        candidates c;
+    `;
+    const results = await executeQuery(query);
+    res.json(results);
+  } catch (error) {
+    console.error("Error fetching results:", error);
+    res.status(500).json({ message: "Failed to fetch election results" });
+  }
 });
 
 // Vote Casting Endpoint
 app.post('/vote/:candidateId', async (req, res) => {
   const { candidateId } = req.params;
-  //Gets the registration number of a user
   const registrationNumber = req.session.user?.registrationNumber;
 
   if (!req.session.user) {
-      return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
   try {
-      // Get the voter's ID based on registration number
-      const [voterRows] = await pool.execute(
-          "SELECT id FROM voters WHERE registration_number = ?",
-          [registrationNumber]
-      );
+    const [voterRows] = await pool.execute(
+      "SELECT id FROM voters WHERE registration_number = ?",
+      [registrationNumber]
+    );
 
-      if (voterRows.length === 0) {
-          return res.status(404).json({ error: 'Voter not found' });
-      }
+    if (voterRows.length === 0) {
+      return res.status(404).json({ error: 'Voter not found' });
+    }
 
-      const voterId = voterRows[0].id;
+    const voterId = voterRows[0].id;
 
-      // Get the candidate's position
-      const [candidateRows] = await pool.execute(
-          "SELECT position FROM candidates WHERE id = ?",
-          [candidateId]
-      );
+    const [candidateRows] = await pool.execute(
+      "SELECT position FROM candidates WHERE id = ?",
+      [candidateId]
+    );
 
-      if (candidateRows.length === 0) {
-          return res.status(404).json({ error: 'Candidate not found' });
-      }
+    if (candidateRows.length === 0) {
+      return res.status(404).json({ error: 'Candidate not found' });
+    }
 
-      const position = candidateRows[0].position;
+    const position = candidateRows[0].position;
 
-      // Check if the voter has already voted for this position
-      const [voteRows] = await pool.execute(
-          "SELECT * FROM votes WHERE voter_id = ? AND position = ?",
-          [voterId, position]
-      );
+    // Check if the voter has already voted for this position
+    const [voteRows] = await pool.execute(
+      "SELECT * FROM votes WHERE voter_id = ? AND position = ?",
+      [      voterId, position]
+    );
 
-      if (voteRows.length > 0) {
-          return res.status(400).json({ error: 'You have already voted for this position' });
-      }
+    if (voteRows.length > 0) {
+      return res.status(400).json({ error: 'You have already voted for this position' });
+    }
 
-      // Insert the vote
-      await pool.execute(
-          "INSERT INTO votes (voter_id, candidate_id, position) VALUES (?, ?, ?)",
-          [voterId, candidateId, position]
-      );
+    // Insert the vote
+    await pool.execute(
+      "INSERT INTO votes (voter_id, candidate_id, position) VALUES (?, ?, ?)",
+      [voterId, candidateId, position]
+    );
 
-      res.json({ success: true });
+    res.json({ success: true });
 
   } catch (err) {
-      console.error('Error casting vote:', err);
-      return res.status(500).json({ error: 'Failed to cast vote' });
+    console.error('Error casting vote:', err);
+    return res.status(500).json({ error: 'Failed to cast vote' });
   }
 });
 
-app.get('/candidates', (req, res) => {
-    const sql = 'SELECT * FROM candidates';
-    db.query(sql, (err, results) => {
-        if (err) {
-            return res.status(500).json({ error: 'Failed to fetch candidates' });
-        }
-        res.json(results);
-    });
+// Check if user has voted
+app.post('/check-vote-status', async (req, res) => {
+  try {
+    const { registrationNumber } = req.body;
+    if (!registrationNumber) {
+      return res.status(400).json({ message: 'Missing registration number' });
+    }
+
+    // Fetch voter ID
+    const [voterRows] = await pool.execute(
+      "SELECT id FROM voters WHERE registration_number = ?",
+      [registrationNumber]
+    );
+
+    if (voterRows.length === 0) {
+      return res.status(404).json({ message: 'Voter not found' });
+    }
+
+    const voterId = voterRows[0].id;
+
+    // Fetch votes cast by this voter
+    const [votes] = await pool.execute(
+      "SELECT candidate_id, position FROM votes WHERE voter_id = ?",
+      [voterId]
+    );
+
+    res.json({ votes });
+
+  } catch (error) {
+    console.error('Error checking vote status:', error);
+    res.status(500).json({ message: 'Internal server error' });
+  }
 });
+
 // Login Endpoint
 app.post("/login", async (req, res) => {
   const { registrationNumber, nationalId } = req.body;
@@ -285,8 +305,9 @@ app.post("/login", async (req, res) => {
         id: user.id,
         role: user.role,
         name: user.name,
+        registrationNumber: user.registration_number // Ensure this is included
       };
-      console.log('User session:', req.session.user);  // Log session
+      console.log('User  session:', req.session.user);  // Log session
       res.json({ success: true, role: user.role, message: "Login successful" });
     } else {
       res.status(401).json({ success: false, message: "Invalid credentials" });
@@ -308,66 +329,13 @@ app.get("/election-dates", async (req, res) => {
   }
 });
 
-// Get Election Results
-app.get("/results", async (req, res) => {
-  try {
-    const query = `
-      SELECT id, name, position, manifesto, image_url, 
-      (SELECT COUNT(*) FROM votes WHERE candidate_id = candidates.id) AS voteCount 
-      FROM candidates
-      ORDER BY voteCount DESC`;
-
-    const result = await executeQuery(query);
-
-    const groupedResults = result.reduce((acc, candidate) => {
-      if (!acc[candidate.position]) {
-        acc[candidate.position] = [];
-      }
-      acc[candidate.position].push(candidate);
-      return acc;
-    }, {});
-
-    res.status(200).json(groupedResults);
-  } catch (err) {
-    console.error("Error fetching election results:", err);
-    res.status(500).json({ message: "Database error", error: err.message });
-  }
-});
-
-// Check if user has voted
-app.post("/check-vote-status", async (req, res) => {
-  const { registrationNumber } = req.body;
-
-  if (!registrationNumber) {
-    return res.status(400).json({ message: "Registration number is required" });
+// Get User Session
+app.get('/session', (req, res) => {
+  if (!req.session.user) {
+    return res.status(401).json({ message: "User  not logged in" });
   }
 
-  try {
-    const [voterRows] = await pool.execute(
-      "SELECT id FROM voters WHERE registration_number = ?",
-      [registrationNumber]
-    );
-
-    if (voterRows.length === 0) {
-      return res.status(404).json({ message: "Voter not found" });
-    }
-
-    const voterId = voterRows[0].id;
-
-    const [voteRows] = await pool.execute(
-      "SELECT * FROM votes WHERE voter_id = ?",
-      [voterId]
-    );
-
-    if (voteRows.length > 0) {
-      return res.json({ hasVoted: true });
-    }
-
-    return res.json({ hasVoted: false });
-  } catch (err) {
-    console.error("Error checking vote status:", err);
-    res.status(500).json({ message: "Database error", error: err.message });
-  }
+  res.json(req.session.user);
 });
 
 // Start Server
